@@ -1,5 +1,5 @@
 /* IRLib.cpp from IRLib - an Arduino library for infrared encoding and decoding
- * Version 1.51   March 2015
+ * Version 0.01   August 2015
  * Copyright 2014 by Chris Young http://cyborg5.com
  *
  * This library is a major rewrite of IRemote by Ken Shirriff which was covered by
@@ -39,7 +39,7 @@ volatile irparams_t irparams;
 const __FlashStringHelper *Pnames(IRTYPES Type) {
   if(Type>LAST_PROTOCOL) Type=UNKNOWN;
   // You can add additional strings before the entry for hash code.
-  const __FlashStringHelper *Names[LAST_PROTOCOL+1]={F("Unknown"),F("NEC"),F("Sony"),F("RC5"),F("RC6"),F("Panasonic Old"),F("JVC"),F("NECx"),F("Hash Code")};
+  const __FlashStringHelper *Names[LAST_PROTOCOL+1]={F("Unknown"),F("LIGHT_STRIKE")};
   return Names[Type];
 };
 
@@ -86,145 +86,15 @@ void IRsendBase::sendGeneric(unsigned long data, unsigned char Num_Bits, unsigne
   }
   if(Use_Stop) mark(Mark_One);   //stop bit of "1"
   if(Max_Extent) {
-#ifdef IRLIB_TRACE
-    Serial.print("Max_Extent="); Serial.println(Max_Extent);
-	Serial.print("Extent="); Serial.println(Extent);
-	Serial.print("Difference="); Serial.println(Max_Extent-Extent);
-#endif
+
 	space(Max_Extent-Extent); 
 	}
 	else space(Space_One);
 };
 
-void IRsendNEC::send(unsigned long data)
-{
-  if (data==REPEAT) {
-    enableIROut(38);
-    mark (564* 16); space(564*4); mark(564);space(56*173);
-  }
-  else {
-    sendGeneric(data,32, 564*16, 564*8, 564, 564, 564*3, 564, 38, true);
-  }
+void IRsendLightStrike::send(unsigned long data) {
+  sendGeneric(data,32, 564*16, 564*8, 564, 564, 564*3, 564, 38, true);
 };
-
-/*
- * Sony is backwards from most protocols. It uses a variable length mark and a fixed length space rather than
- * a fixed mark and a variable space. Our generic send will still work. According to the protocol you must send
- * Sony commands at least three times so we automatically do it here.
- */
-void IRsendSony::send(unsigned long data, int nbits) {
-  for(int i=0; i<3;i++){
-     sendGeneric(data,nbits, 600*4, 600, 600*2, 600, 600, 600, 40, false,((nbits==8)? 22000:45000)); 
-  }
-};
-
-/*
- * This next section of send routines were added by Chris Young. They all use the generic send.
- */
-void IRsendNECx::send(unsigned long data)
-{
-  sendGeneric(data,32, 564*8, 564*8, 564, 564, 564*3, 564, 38, true, 108000);
-};
-
-void IRsendPanasonic_Old::send(unsigned long data)
-{
-  sendGeneric(data,22, 833*4, 833*4, 833, 833, 833*3, 833,57, true);
-};
-
-/*
- * JVC omits the mark/space header on repeat sending. Therefore we multiply it by 0 if it's a repeat.
- * The only device I had to test this protocol was an old JVC VCR. It would only work if at least
- * 2 frames are sent separated by 45us of "space". Therefore you should call this routine once with
- * "First=true" and it will send a first frame followed by one repeat frame. If First== false,
- * it will only send a single repeat frame.
- */
-void IRsendJVC::send(unsigned long data, bool First)
-{
-  sendGeneric(data, 16,525*16*First, 525*8*First, 525, 525,525*3, 525, 38, true);
-  space(525*45);
-  if(First) sendGeneric(data, 16,0,0, 525, 525,525*3, 525, 38, true);
-}
-
-/*
- * The remaining protocols require special treatment. They were in the original IRremote library.
- */
-void IRsendRaw::send(unsigned int buf[], unsigned char len, unsigned char hz)
-{
-  enableIROut(hz);
-  for (unsigned char i = 0; i < len; i++) {
-    if (i & 1) {
-      space(buf[i]);
-    } 
-    else {
-      mark(buf[i]);
-    }
-  }
-  space(0); // Just to be sure
-}
-
-/*
- * The RC5 protocol uses a phase encoding of data bits. A space/mark pair indicates "1"
- * and a mark/space indicates a "0". It begins with a single "1" bit which is not encoded
- * in the data. The high order data bit is a toggle bit that indicates individual
- * keypresses. You must toggle this bit yourself when sending data.
- */
-
-#define RC5_T1		889
-#define RC5_RPT_LENGTH	46000
-void IRsendRC5::send(unsigned long data)
-{
-  enableIROut(36);
-  data = data << (32 - 13);
-  Extent=0;
-  mark(RC5_T1); // First start bit
-//Note: Original IRremote library incorrectly assumed second bit was always a "1"
-//bit patterns from this decoder are not backward compatible with patterns produced
-//by original library. Uncomment the following two lines to maintain backward compatibility.
-  //space(RC5_T1); // Second start bit
-  //mark(RC5_T1); // Second start bit
-  for (unsigned char i = 0; i < 13; i++) {
-    if (data & TOPBIT) {
-      space(RC5_T1); mark(RC5_T1);// 1 is space, then mark
-    } 
-    else {
-      mark(RC5_T1);  space(RC5_T1);// 0 is mark, then space
-    }
-    data <<= 1;
-  }
-  space(114000-Extent); // Turn off at end
-}
-
-/*
- * The RC6 protocol also phase encodes databits although the phasing is opposite of RC5.
- */
-#define RC6_HDR_MARK	2666
-#define RC6_HDR_SPACE	889
-#define RC6_T1		444
-void IRsendRC6::send(unsigned long data, unsigned char nbits)
-{
-  enableIROut(36);
-  data = data << (32 - nbits);
-  Extent=0;
-  mark(RC6_HDR_MARK); space(RC6_HDR_SPACE);
-  mark(RC6_T1);  space(RC6_T1);// start bit "1"
-  int t;
-  for (int i = 0; i < nbits; i++) {
-    if (i == 3) {
-      t = 2 * RC6_T1;       // double-wide trailer bit
-    } 
-    else {
-      t = RC6_T1;
-    }
-    if (data & TOPBIT) {
-      mark(t); space(t);//"1" is a Mark/space
-    } 
-    else {
-      space(t); mark(t);//"0" is a space/Mark
-    }
-    data <<= 1;
-  }
-  space(107000-Extent); // Turn off at end
-}
 
 /*
  * This method can be used to send any of the supported types except for raw and hash code.
@@ -233,16 +103,8 @@ void IRsendRC6::send(unsigned long data, unsigned char nbits)
  */
 void IRsend::send(IRTYPES Type, unsigned long data, unsigned int data2) {
   switch(Type) {
-    case NEC:           IRsendNEC::send(data); break;
-    case SONY:          IRsendSony::send(data,data2); break;
-    case RC5:           IRsendRC5::send(data); break;
-    case RC6:           IRsendRC6::send(data,data2); break;
-    case PANASONIC_OLD: IRsendPanasonic_Old::send(data); break;
-    case NECX:          IRsendNECx::send(data); break;    
-    case JVC:           IRsendJVC::send(data,(bool)data2); break;
-  //case ADDITIONAL:    IRsendADDITIONAL::send(data); break;//add additional protocols here
-	//You should comment out protocols you will likely never use and/or add extra protocols here
-  }
+    case LIGHT_STRIKE:   IRsendLightStrike::send(data); break;
+    }
 }
 
 /*
@@ -261,24 +123,8 @@ IRdecodeBase::IRdecodeBase(void) {
   Reset();
 };
 
-/*
- * Normally the decoder uses irparams.rawbuf but if you want to resume receiving while
- * still decoding you can define a separate buffer and pass the address here. 
- * Then IRrecvBase::GetResults will copy the raw values from its buffer to yours allowing you to
- * call IRrecvBase::resume immediately before you call decode.
- */
-void IRdecodeBase::UseExtnBuf(void *P){
-  rawbuf=(volatile unsigned int*)P;
-};
 
-/*
- * Copies rawbuf and rawlen from one decoder to another. See IRhashdecode example
- * for usage.
- */
-void IRdecodeBase::copyBuf (IRdecodeBase *source){
-   memcpy((void *)rawbuf,(const void *)source->rawbuf,sizeof(irparams.rawbuf));
-   rawlen=source->rawlen;
-};
+
 
 /*
  * This routine is actually quite useful. Allows extended classes to call their parent
@@ -364,24 +210,7 @@ bool IRdecodeBase::decodeGeneric(unsigned char Raw_Count, unsigned int Head_Mark
   offset++;
   if (Head_Space) {if (!MATCH(rawbuf[offset],Head_Space)) return HEADER_SPACE_ERROR(Head_Space);}
 
-  if (Mark_One) {//Length of a mark indicates data "0" or "1". Space_Zero is ignored.
-    offset=2;//skip initial gap plus header Mark.
-    Max=rawlen;
-    while (offset < Max) {
-      if (!MATCH(rawbuf[offset], Space_One)) return DATA_SPACE_ERROR(Space_One);
-      offset++;
-      if (MATCH(rawbuf[offset], Mark_One)) {
-        data = (data << 1) | 1;
-      } 
-      else if (MATCH(rawbuf[offset], Mark_Zero)) {
-        data <<= 1;
-      } 
-      else return DATA_MARK_ERROR(Mark_Zero);
-      offset++;
-    }
-    bits = (offset - 1) / 2;
-  }
-  else {//Mark_One was 0 therefore length of a space indicates data "0" or "1".
+
     Max=rawlen-1; //ignore stop bit
     offset=3;//skip initial gap plus two header items
     while (offset < Max) {
@@ -395,7 +224,7 @@ bool IRdecodeBase::decodeGeneric(unsigned char Raw_Count, unsigned int Head_Mark
       } 
       else return DATA_SPACE_ERROR(Space_Zero);
       offset++;
-    }
+    
     bits = (offset - 1) / 2 -1;//didn't encode stop bit
   }
   // Success
@@ -415,13 +244,7 @@ bool IRdecodeBase::decodeGeneric(unsigned char Raw_Count, unsigned int Head_Mark
  * Note: Don't forget to call IRrecvBase::resume(); after decoding is complete.
  */
 bool IRdecode::decode(void) {
-  if (IRdecodeNEC::decode()) return true;
-  if (IRdecodeSony::decode()) return true;
-  if (IRdecodeRC5::decode()) return true;
-  if (IRdecodeRC6::decode()) return true;
-  if (IRdecodePanasonic_Old::decode()) return true;
-  if (IRdecodeNECx::decode()) return true;
-  if (IRdecodeJVC::decode()) return true;
+  if (IRdecodeLightStrike::decode()) return true;
 //if (IRdecodeADDITIONAL::decode()) return true;//add additional protocols here
 //Deliberately did not add hash code decoding. If you get decode_type==UNKNOWN and
 // you want to know a hash code you can call IRhash::decode() yourself.
@@ -429,260 +252,7 @@ bool IRdecode::decode(void) {
   return false;
 }
 
-#define NEC_RPT_SPACE	2250
-bool IRdecodeNEC::decode(void) {
-  IRLIB_ATTEMPT_MESSAGE(F("NEC"));
-  // Check for repeat
-  if (rawlen == 4 && MATCH(rawbuf[2], NEC_RPT_SPACE) &&
-    MATCH(rawbuf[3],564)) {
-    bits = 0;
-    value = REPEAT;
-    decode_type = NEC;
-    return true;
-  }
-  if(!decodeGeneric(68, 564*16, 564*8, 0, 564, 564*3, 564)) return false;
-  decode_type = NEC;
-  return true;
-}
 
-// According to http://www.hifi-remote.com/johnsfine/DecodeIR.html#Sony8 
-// Sony protocol can only be 8, 12, 15, or 20 bits in length.
-bool IRdecodeSony::decode(void) {
-  IRLIB_ATTEMPT_MESSAGE(F("Sony"));
-  if(rawlen!=2*8+2 && rawlen!=2*12+2 && rawlen!=2*15+2 && rawlen!=2*20+2) return RAW_COUNT_ERROR;
-  if(!decodeGeneric(0, 600*4, 600, 600*2, 600, 600,0)) return false;
-  decode_type = SONY;
-  return true;
-}
-
-/*
- * The next several decoders were added by Chris Young. They illustrate some of the special cases
- * that can come up when decoding using the generic decoder.
- */
-
-/*
- * A very good source for protocol information is... http://www.hifi-remote.com/johnsfine/DecodeIR.html
- * I used that information to understand what they call the "Panasonic old" protocol which is used by
- * Scientific Atlanta cable boxes. That website uses a very strange notation called IRP notation.
- * For this protocol, the notation was:
- * {57.6k,833}<1,-1|1,-3>(4,-4,D:5,F:6,~D:5,~F:6,1,-???)+ 
- * This indicates that the frequency is 57.6, the base length for the pulse is 833
- * The first part of the <x,-x|x,-x> section tells you what a "0" is and the second part
- * tells you what a "1" is. That means "0" is 833 on, 833 off while an "1" is 833 on
- * followed by 833*3=2499 off. The section in parentheses tells you what data gets sent.
- * The protocol begins with header consisting of 4*833 on and 4*833 off. The other items 
- * describe what the remaining data bits are.
- * It reads as 5 device bits followed by 6 function bits. You then repeat those bits complemented.
- * It concludes with a single "1" bit followed by and an undetermined amount of blank space.
- * This makes the entire protocol 5+6+5+6= 22 bits long since we don't encode the stop bit.
- * The "+" at the end means you only need to send it once and it can repeat as many times as you want.
- */
-bool IRdecodePanasonic_Old::decode(void) {
-  IRLIB_ATTEMPT_MESSAGE(F("Panasonic_Old"));
-  if(!decodeGeneric(48,833*4,833*4,0,833,833*3,833)) return false;
-  /*
-   * The protocol spec says that the first 11 bits described the device and function.
-   * The next 11 bits are the same thing only it is the logical Bitwise complement.
-   * Many protocols have such check features in their definition but our code typically doesn't
-   * perform these checks. For example NEC's least significant 8 bits are the complement of 
-   * of the next more significant 8 bits. While it's probably not necessary to error check this, 
-   * you can un-comment the next 4 lines of code to do this extra checking.
-   */
-//  long S1= (value & 0x0007ff);       // 00 0000 0000 0111 1111 1111 //00000 000000 11111 111111
-//  long S2= (value & 0x3ff800)>> 11;  // 11 1111 1111 1000 0000 0000 //11111 111111 00000 000000
-//  S2= (~S2) & 0x0007ff;
-//  if (S1!=S2) return IRLIB_REJECTION_MESSAGE(F("inverted bit redundancy"));
-  // Success
-  decode_type = PANASONIC_OLD;
-  return true;
-}
-
-bool IRdecodeNECx::decode(void) {
-  IRLIB_ATTEMPT_MESSAGE(F("NECx"));  
-  if(!decodeGeneric(68,564*8,564*8,0,564,564*3,564)) return false;
-  decode_type = NECX;
-  return true;
-}
-
-// JVC does not send any header if there is a repeat.
-bool IRdecodeJVC::decode(void) {
-  IRLIB_ATTEMPT_MESSAGE(F("JVC"));
-  if(!decodeGeneric(36,525*16,525*8,0,525,525*3,525)) 
-  {
-     IRLIB_ATTEMPT_MESSAGE(F("JVC Repeat"));
-     if (rawlen==34) 
-     {
-        if(!decodeGeneric(0,525,0,0,525,525*3,525))
-           {return IRLIB_REJECTION_MESSAGE(F("JVC repeat failed generic"));}
-        else {
- //If this is a repeat code then IRdecodeBase::decode fails to add the most significant bit
-           if (MATCH(rawbuf[4],(525*3))) 
-           {
-              value |= 0x8000;
-           } 
-           else
-           {
-             if (!MATCH(rawbuf[4],525)) return DATA_SPACE_ERROR(525);
-           }
-        }
-        bits++;
-     }
-     else return RAW_COUNT_ERROR;
-  } 
-  decode_type =JVC;
-  return true;
-}
-
-/*
- * The remaining protocols from the original IRremote library require special handling
- * This routine gets one undecoded level at a time from the raw buffer.
- * The RC5/6 decoding is easier if the data is broken into time intervals.
- * E.g. if the buffer has MARK for 2 time intervals and SPACE for 1,
- * successive calls to getRClevel will return MARK, MARK, SPACE.
- * offset and used are updated to keep track of the current position.
- * t1 is the time interval for a single bit in microseconds.
- * Returns ERROR if the measured time interval is not a multiple of t1.
- */
-IRdecodeRC::RCLevel IRdecodeRC::getRClevel(unsigned char *used, const unsigned int t1) {
-  if (offset >= rawlen) {
-    // After end of recorded buffer, assume SPACE.
-    return SPACE;
-  }
-  unsigned int width = rawbuf[offset];
-  IRdecodeRC::RCLevel val;
-  if ((offset) % 2) val=MARK; else val=SPACE;
-  
-  unsigned char avail;
-  if (MATCH(width, t1)) {
-    avail = 1;
-  } 
-  else if (MATCH(width, 2*t1)) {
-    avail = 2;
-  } 
-  else if (MATCH(width, 3*t1)) {
-    avail = 3;
-  } 
-  else {
-    if((IgnoreHeader) && (offset==1) && (width<t1))
-	  avail =1;
-	else{
-      return ERROR;}
-  }
-  (*used)++;
-  if (*used >= avail) {
-    *used = 0;
-    (offset)++;
-  }
-  return val;   
-}
-
-#define MIN_RC5_SAMPLES 11
-#define MIN_RC6_SAMPLES 1
-
-bool IRdecodeRC5::decode(void) {
-  IRLIB_ATTEMPT_MESSAGE(F("RC5"));
-  if (rawlen < MIN_RC5_SAMPLES + 2) return RAW_COUNT_ERROR;
-  offset = 1; // Skip gap space
-  data = 0;
-  used = 0;
-  // Get start bits
-  if (getRClevel(&used, RC5_T1) != MARK) return HEADER_MARK_ERROR(RC5_T1);
-//Note: Original IRremote library incorrectly assumed second bit was always a "1"
-//bit patterns from this decoder are not backward compatible with patterns produced
-//by original library. Uncomment the following two lines to maintain backward compatibility.
-  //if (getRClevel(&used, RC5_T1) != SPACE) return HEADER_SPACE_ERROR(RC5_T1);
-  //if (getRClevel(&used, RC5_T1) != MARK) return HEADER_MARK_ERROR(RC5_T1);
-  for (nbits = 0; offset < rawlen; nbits++) {
-    RCLevel levelA = getRClevel(&used, RC5_T1); 
-    RCLevel levelB = getRClevel(&used, RC5_T1);
-    if (levelA == SPACE && levelB == MARK) {
-      // 1 bit
-      data = (data << 1) | 1;
-    } 
-    else if (levelA == MARK && levelB == SPACE) {
-      // zero bit
-      data <<= 1;
-    } 
-    else return DATA_MARK_ERROR(RC5_T1);
-  }
-  // Success
-  bits = 13;
-  value = data;
-  decode_type = RC5;
-  return true;
-}
-
-bool IRdecodeRC6::decode(void) {
-  IRLIB_ATTEMPT_MESSAGE(F("RC6"));
-  if (rawlen < MIN_RC6_SAMPLES) return RAW_COUNT_ERROR;
-  // Initial mark
-  if (!IgnoreHeader) {
-    if (!MATCH(rawbuf[1], RC6_HDR_MARK)) return HEADER_MARK_ERROR(RC6_HDR_MARK);
-  }
-  if (!MATCH(rawbuf[2], RC6_HDR_SPACE)) return HEADER_SPACE_ERROR(RC6_HDR_SPACE);
-  offset=3;//Skip gap and header
-  data = 0;
-  used = 0;
-  // Get start bit (1)
-  if (getRClevel(&used, RC6_T1) != MARK) return DATA_MARK_ERROR(RC6_T1);
-  if (getRClevel(&used, RC6_T1) != SPACE) return DATA_SPACE_ERROR(RC6_T1);
-  for (nbits = 0; offset < rawlen; nbits++) {
-    RCLevel levelA, levelB; // Next two levels
-    levelA = getRClevel(&used, RC6_T1); 
-    if (nbits == 3) {
-      // T bit is double wide; make sure second half matches
-      if (levelA != getRClevel(&used, RC6_T1)) return TRAILER_BIT_ERROR(RC6_T1);
-    } 
-    levelB = getRClevel(&used, RC6_T1);
-    if (nbits == 3) {
-      // T bit is double wide; make sure second half matches
-      if (levelB != getRClevel(&used, RC6_T1)) return TRAILER_BIT_ERROR(RC6_T1);
-    } 
-    if (levelA == MARK && levelB == SPACE) { // reversed compared to RC5
-      // 1 bit
-      data = (data << 1) | 1;
-    } 
-    else if (levelA == SPACE && levelB == MARK) {
-      // zero bit
-      data <<= 1;
-    } 
-    else {
-      return DATA_MARK_ERROR(RC6_T1); 
-    } 
-  }
-  // Success
-  bits = nbits;
-  value = data;
-  decode_type = RC6;
-  return true;
-}
-
-/*
- * This Hash decoder is based on IRhashcode
- * Copyright 2010 Ken Shirriff
- * For details see http://www.righto.com/2010/01/using-arbitrary-remotes-with-arduino.html
- * Use FNV hash algorithm: http://isthe.com/chongo/tech/comp/fnv/#FNV-param
- * Converts the raw code values into a 32-bit hash code.
- * Hopefully this code is unique for each button.
- */
-#define FNV_PRIME_32 16777619
-#define FNV_BASIS_32 2166136261
-// Compare two tick values, returning 0 if newval is shorter,
-// 1 if newval is equal, and 2 if newval is longer
-int IRdecodeHash::compare(unsigned int oldval, unsigned int newval) {
-  if (newval < oldval * .8) return 0;
-  if (oldval < newval * .8) return 2;
-  return 1;
-}
-
-bool IRdecodeHash::decode(void) {
-  hash = FNV_BASIS_32;
-  for (int i = 1; i+2 < rawlen; i++) {
-    hash = (hash * FNV_PRIME_32) ^ compare(rawbuf[i], rawbuf[i+2]);
-  }
-//note: does not set decode_type=HASH_CODE nor "value" because you might not want to.
-  return true;
-}
 
 /* We have created a new receiver base class so that we can use its code to implement
  * additional receiver classes in addition to the original IRremote code which used
@@ -735,187 +305,7 @@ void IRrecvBase::resume() {
   irparams.rawlen = 0;
 }
 
-/* This receiver uses no interrupts or timers. Other interrupt driven receivers
- * allow you to do other things and call GetResults at your leisure to see if perhaps
- * a sequence has been received. Typically you would put GetResults in your loop
- * and it would return false until the sequence had been received. However because this
- * receiver uses no interrupts, it takes control of your program when you call GetResults
- * and doesn't let go until it's got something to show you. The advantage is you don't need
- * interrupts which would make it easier to use and nonstandard hardware and will allow you to
- * use any digital input pin. Timing of this routine is only as accurate as your "micros();"
- */
-bool IRrecvLoop::GetResults(IRdecodeBase *decoder) {
-  bool Finished=false;
-  byte OldState=HIGH;byte NewState;
-  unsigned long StartTime, DeltaTime, EndTime;
-  StartTime=micros();
-  while(irparams.rawlen<RAWBUF) {  //While the buffer not overflowing
-    while(OldState==(NewState=digitalRead(irparams.recvpin))) { //While the pin hasn't changed
-      if( (DeltaTime = (EndTime=micros()) - StartTime) > 10000) { //If it's a very long wait
-        if(Finished=irparams.rawlen) break; //finished unless it's the opening gap
-      }
-    }
-    if(Finished) break;
-	do_Blink();
-    irparams.rawbuf[irparams.rawlen++]=DeltaTime;
-    OldState=NewState;StartTime=EndTime;
-  };
-  IRrecvBase::GetResults(decoder);
-  return true;
-}
-#ifdef USE_ATTACH_INTERRUPTS
-/* This receiver uses the pin change hardware interrupt to detect when your input pin
- * changes state. It gives more detailed results than the 50µs interrupts of IRrecv
- * and theoretically is more accurate than IRrecvLoop. However because it only detects
- * pin changes, it doesn't always know when it's finished. GetResults attempts to detect
- * a long gap of space but sometimes the next signal gets there before GetResults notices.
- * This means the second set of signals can get messed up unless there is a long gap.
- * This receiver is based in part on Arduino firmware for use with AnalysIR IR signal analysis
- * software for Windows PCs. Many thanks to the people at http://analysir.com for their 
- * assistance in developing this section of code.
- */
 
-IRrecvPCI::IRrecvPCI(unsigned char inum) {
-  Init();
-  intrnum=inum;
-  irparams.recvpin=Pin_from_Intr(inum);
-
-  }
-void IRrecvPCI_Handler(){ 
-  unsigned long volatile ChangeTime=micros();
-  unsigned long DeltaTime=ChangeTime-irparams.timer;
-  switch(irparams.rcvstate) {
-    case STATE_STOP: return;
-    case STATE_RUNNING:
-	  do_Blink();
-      if (DeltaTime>10000) {
-        irparams.rcvstate=STATE_STOP; 
-        //Setting gap to 0 is a flag to let you know why we stopped For debugging purposes
-        //irparams.rawbuf[0]=0;
-        return;
-      };
-      break;
-    case STATE_IDLE:
-       if(digitalRead(irparams.recvpin)) return; else irparams.rcvstate=STATE_RUNNING;
-       break;
-  };
-  irparams.rawbuf[irparams.rawlen]=DeltaTime;
-  irparams.timer=ChangeTime;
-  if(++irparams.rawlen>=RAWBUF) {
-    irparams.rcvstate=STATE_STOP;
-    //Setting gap to 1 is a flag to let you know why we stopped For debugging purposes
-    //irparams.rawbuf[0]=1;
-  }
-}
-
-void IRrecvPCI::resume(void) {
-  irparams.rcvstate = STATE_IDLE;
-  IRrecvBase::resume();
-  irparams.timer=micros();
-  attachInterrupt(intrnum, IRrecvPCI_Handler, CHANGE);
-};
-
-bool IRrecvPCI::GetResults(IRdecodeBase *decoder) {
-  if(irparams.rcvstate==STATE_RUNNING) {
-    unsigned long ChangeTime=irparams.timer;
-    if( (micros()-ChangeTime) > 10000) {
-      irparams.rcvstate=STATE_STOP;
-      //Setting gap to 2 is a flag to let you know why we stopped For debugging purposes
-      //irparams.rawbuf[0]=2;
-    }
-  }
-  if (irparams.rcvstate != STATE_STOP) return false;
-  detachInterrupt(intrnum);
-  IRrecvBase::GetResults(decoder);
-  return true;
-};
-
- /* This class facilitates detection of frequency of an IR signal. Requires a TSMP58000
- * or equivalent device connected to the hardware interrupt pin.
- * Create an instance of the object passing the interrupt number.
- */
-volatile unsigned FREQUENCY_BUFFER_TYPE *IRfreqTimes;
-volatile unsigned char IRfreqCount;
-IRfrequency::IRfrequency(unsigned char inum) {  //Note this is interrupt number, not pin number
-  intrnum=inum;
-  pin= Pin_from_Intr(inum);
-  //ISR cannot be passed parameters. If I declare the buffer global it would
-  //always eat RAN even if this object was not declared. So we make global pointer
-  //and copy the address to it. ISR still puts data in the object.
-  IRfreqTimes= & (Time_Stamp[0]);
-};
-
-// Note ISR handler cannot be part of a class/object
-void IRfreqISR(void) {
-   IRfreqTimes[IRfreqCount++]=micros();
-}
-
-void IRfrequency::enableFreqDetect(void){
-  attachInterrupt(intrnum,IRfreqISR, FALLING);
-  for(i=0; i<256; i++) Time_Stamp[i]=0;
-  IRfreqCount=0;
-  Results= 0.0;
-  Samples=0;
-};
-/* Test to see if we have collected at least one full buffer of data.
- * Note values are always zeroed before beginning so any non-zero data
- * in the final elements means we have collected at least a buffer full.
- * By chance the final might be zero so we test two of them. Would be
- * nearly impossible for two consecutive elements to be zero unless
- * we had not yet collected data.
- */
-bool IRfrequency::HaveData(void) {
-  return (Time_Stamp[255] || Time_Stamp[254]);
-};
-
-void IRfrequency::disableFreqDetect(void){
-  detachInterrupt(intrnum);
- };
-
-void IRfrequency::ComputeFreq(void){
-   Samples=0; Sum=0;
-   for(i=1; i<256; i++) {
-     unsigned char Interval=Time_Stamp[i]-Time_Stamp[i-1];
-	 if(Interval>50 || Interval<10) continue;//ignore extraneous results
-	 Sum+=Interval;//accumulate usable intervals
-	 Samples++;    //account usable intervals
-   };
-   if(Sum)
-     Results=(double) Samples/(double)Sum*1000;
-   else
-     Results= 0.0;
- };
- 
-//Didn't need to be a method that we made one following example of IRrecvBase
-unsigned char IRfrequency::getPinNum(void) {
-  return pin;
-}
-
-void IRfrequency::DumpResults(bool Detail) {
-  ComputeFreq();
-#ifdef USE_DUMP
-  Serial.print(F("Number of samples:")); Serial.print(Samples,DEC);
-  Serial.print(F("\t  Total interval (us):")); Serial.println(Sum,DEC); 
-  Serial.print(F("Avg. interval(us):")); Serial.print(1.0*Sum/Samples,2);
-  Serial.print(F("\t Aprx. Frequency(kHz):")); Serial.print(Results,2);
-  Serial.print(F(" (")); Serial.print(int(Results+0.5),DEC);
-  Serial.println(F(")"));
-  if(Detail) {
-    for(i=1; i<256; i++) {
-      unsigned int Interval=Time_Stamp[i]-Time_Stamp[i-1];
-      Serial.print(Interval,DEC); Serial.print("\t");
-      if ((i % 4)==0)Serial.print(F("\t "));
-      if ((i % 8)==0)Serial.println();
-      if ((i % 32)==0)Serial.println();
-    }
-    Serial.println();
-  }
-#else
-  DumpUnavailable(); 
-#endif
-};
-#endif // ifdef USE_ATTACH_INTERRUPTS
- 
 /*
  * The remainder of this file is all related to interrupt handling and hardware issues. It has 
  * nothing to do with IR protocols. You need not understand this is all you're doing is adding 
@@ -1000,9 +390,9 @@ void do_Blink(void) {
     }
   }
 }
-#ifdef USE_IRRECV
+
 /*
- * The original IRrecv which uses 50µs timer driven interrupts to sample input pin.
+ * The original IRrecv which uses 50Âµs timer driven interrupts to sample input pin.
  */
 void IRrecv::resume() {
   // initialize state machine variables
@@ -1091,7 +481,7 @@ ISR(IR_RECV_INTR_NAME)
   }
   do_Blink();
 }
-#endif //end of ifdef USE_IRRECV
+
 /*
  * The hardware specific portions of IRsendBase
  */
@@ -1138,18 +528,3 @@ void IRsendBase::space(unsigned int time) {
  My_delay_uSecs(time);
  Extent+=time;
 }
-
-/*
- * Various debugging routines
- */
-
-
-#ifdef IRLIB_TRACE
-void IRLIB_ATTEMPT_MESSAGE(const __FlashStringHelper * s) {Serial.print(F("Attempting ")); Serial.print(s); Serial.println(F(" decode:"));};
-void IRLIB_TRACE_MESSAGE(const __FlashStringHelper * s) {Serial.print(F("Executing ")); Serial.println(s);};
-byte IRLIB_REJECTION_MESSAGE(const __FlashStringHelper * s) { Serial.print(F(" Protocol failed because ")); Serial.print(s); Serial.println(F(" wrong.")); return false;};
-byte IRLIB_DATA_ERROR_MESSAGE(const __FlashStringHelper * s, unsigned char index, unsigned int value, unsigned int expected) {  
- IRLIB_REJECTION_MESSAGE(s); Serial.print(F("Error occurred with rawbuf[")); Serial.print(index,DEC); Serial.print(F("]=")); Serial.print(value,DEC);
- Serial.print(F(" expected:")); Serial.println(expected,DEC); return false;
-};
-#endif
